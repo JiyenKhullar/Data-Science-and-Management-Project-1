@@ -1,0 +1,109 @@
+CREATE CONSTRAINT business_id_unique IF NOT EXISTS
+  FOR (b:Business) REQUIRE b.business_id IS UNIQUE;
+CREATE CONSTRAINT user_id_unique IF NOT EXISTS
+  FOR (u:User) REQUIRE u.user_id IS UNIQUE;
+CREATE CONSTRAINT review_id_unique IF NOT EXISTS
+  FOR (r:Review) REQUIRE r.review_id IS UNIQUE;
+CREATE CONSTRAINT checkin_node_key IF NOT EXISTS
+  FOR (c:Checkin) REQUIRE (c.business_id, c.date, c.time) IS NODE KEY;
+CREATE CONSTRAINT tip_node_key IF NOT EXISTS
+  FOR (t:Tip) REQUIRE (t.user_id, t.business_id, t.date) IS NODE KEY;
+
+
+LOAD CSV WITH HEADERS FROM 'file:///business_filtered.csv' AS row
+MERGE (b:Business {business_id: row.business_id})
+SET
+  b.name         = row.name,
+  b.address      = row.address,
+  b.city         = row.city,
+  b.state        = row.state,
+  b.postal_code  = row.postal_code,
+  b.latitude     = toFloat(row.latitude),
+  b.longitude    = toFloat(row.longitude),
+  b.stars        = toFloat(row.stars),
+  b.review_count = toInteger(row.review_count),
+  b.is_open      = toBoolean(row.is_open),
+  b.attributes   = row.attributes,
+  b.categories   = split(row.categories, ';'),
+  b.hours        = row.hours;
+
+LOAD CSV WITH HEADERS FROM 'file:///user_small.csv' AS row
+WITH row, split(row.yelping_since, ' ') AS dt_parts
+MERGE (u:User {user_id: row.user_id})
+SET
+  u.name               = row.name,
+  u.review_count       = toInteger(row.review_count),
+  u.yelping_date       = date(dt_parts[0]),
+  u.yelping_time       = time(dt_parts[1]),
+  u.useful             = toInteger(row.useful),
+  u.funny              = toInteger(row.funny),
+  u.cool               = toInteger(row.cool),
+  u.elite              = row.elite,
+  u.friends            = row.friends,
+  u.fans               = toInteger(row.fans),
+  u.average_stars      = toFloat(row.average_stars),
+  u.compliment_hot     = toInteger(row.compliment_hot),
+  u.compliment_more    = toInteger(row.compliment_more),
+  u.compliment_profile = toInteger(row.compliment_profile),
+  u.compliment_cute    = toInteger(row.compliment_cute),
+  u.compliment_list    = toInteger(row.compliment_list),
+  u.compliment_note    = toInteger(row.compliment_note),
+  u.compliment_plain   = toInteger(row.compliment_plain),
+  u.compliment_cool    = toInteger(row.compliment_cool),
+  u.compliment_funny   = toInteger(row.compliment_funny),
+  u.compliment_writer  = toInteger(row.compliment_writer),
+  u.compliment_photos  = toInteger(row.compliment_photos);
+
+
+CALL apoc.periodic.iterate(
+  "LOAD CSV WITH HEADERS FROM 'file:///checkin_small.csv' AS row RETURN row",
+  "
+    MERGE (c:Checkin {
+      business_id: row.business_id,
+      date:        date(row.date),
+      time:        time(row.time)
+    })
+    WITH c, row
+    MATCH (b:Business {business_id: row.business_id})
+    MERGE (b)-[:HAS_CHECKIN]->(c)
+  ",
+  {batchSize: 1000}
+);
+
+
+LOAD CSV WITH HEADERS FROM 'file:///review_small_escaped.csv' AS row
+MERGE (r:Review {review_id: row.review_id})
+SET
+  r.stars  = toInteger(row.stars),
+  r.date   = date(row.date),
+  r.time   = time(row.time),
+  r.useful = toInteger(row.useful),
+  r.funny  = toInteger(row.funny),
+  r.cool   = toInteger(row.cool),
+  r.text   = row.text,
+  r.dts    = row.dts,
+  r.s      = row.s
+WITH r, row
+MATCH (u:User     {user_id:     row.user_id})
+MATCH (b:Business {business_id: row.business_id})
+MERGE (u)-[:WROTE]->(r)
+MERGE (r)-[:REVIEWS]->(b);
+
+LOAD CSV WITH HEADERS FROM 'file:///tips_small.csv' AS row
+WITH row, split(row.date, ' ') AS dt_parts
+MERGE (t:Tip {
+  user_id:     row.user_id,
+  business_id: row.business_id,
+  date:        date(dt_parts[0])
+})
+SET
+  t.time             = time(dt_parts[1]),
+  t.text             = row.text,
+  t.compliment_count = toInteger(row.compliment_count),
+  t.d                = row.d
+WITH t, row
+MATCH (u:User     {user_id:     row.user_id})
+MATCH (b:Business {business_id: row.business_id})
+MERGE (u)-[:WROTE_TIP]->(t)
+MERGE (b)-[:HAS_TIP]->(t);
+
